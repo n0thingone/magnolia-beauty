@@ -13,17 +13,20 @@ import {
   MessageSquare,
   Plus,
   X,
+  BadgeCheck,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
 type AppointmentStatus =
   | "pending_payment"
+  | "paid"
   | "deposit_paid"
   | "confirmed"
   | "rescheduled"
   | "completed"
   | "cancelled"
-  | "no_show";
+  | "no_show"
+  | "expired";
 
 type Appointment = {
   id: string;
@@ -67,26 +70,73 @@ const formatDate = (date: string) => date.split("-").reverse().join("/");
 
 const formatTime = (time: string) => time.slice(0, 5);
 
+const todayDate = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+};
+
+const normalizeWhatsapp = (phone: string) => {
+  let digits = phone.replace(/\D/g, "");
+
+  if (digits.startsWith("00")) digits = digits.slice(2);
+  if (digits.startsWith("0")) digits = digits.slice(1);
+  if (digits.startsWith("54")) return digits;
+
+  return `549${digits}`;
+};
+
+const openWhatsapp = (phone: string | null | undefined, message: string) => {
+  if (!phone) {
+    alert("Esta clienta no tiene WhatsApp cargado.");
+    return;
+  }
+
+  const normalizedPhone = normalizeWhatsapp(phone);
+  const url = `https://wa.me/${normalizedPhone}?text=${encodeURIComponent(
+    message,
+  )}`;
+
+  window.open(url, "_blank", "noopener,noreferrer");
+};
+
+const getCustomerName = (appointment: Appointment) => {
+  if (!appointment.customers) return "Clienta";
+
+  const firstName = appointment.customers.first_name || "";
+  const lastName = appointment.customers.last_name || "";
+  const fullName = `${firstName} ${lastName}`.trim();
+
+  return fullName || "Clienta";
+};
+
 const statusLabel: Record<AppointmentStatus, string> = {
   pending_payment: "Pendiente pago",
+  paid: "Seña pagada",
   deposit_paid: "Seña pagada",
   confirmed: "Confirmado",
   rescheduled: "Reagendado",
   completed: "Atendido",
   cancelled: "Cancelado",
   no_show: "No vino",
+  expired: "Expirado",
 };
 
 function StatusBadge({ status }: { status: AppointmentStatus }) {
   const styles: Record<AppointmentStatus, string> = {
     pending_payment:
       "border-yellow-300/30 bg-yellow-400/15 text-yellow-200",
+    paid: "border-[#E535AA]/40 bg-[#E535AA]/15 text-[#FAD8F0]",
     deposit_paid: "border-[#E535AA]/40 bg-[#E535AA]/15 text-[#FAD8F0]",
     confirmed: "border-emerald-300/30 bg-emerald-400/15 text-emerald-200",
     rescheduled: "border-purple-300/30 bg-purple-400/15 text-purple-200",
     completed: "border-blue-300/30 bg-blue-400/15 text-blue-200",
     cancelled: "border-red-300/30 bg-red-400/15 text-red-200",
     no_show: "border-orange-300/30 bg-orange-400/15 text-orange-200",
+    expired: "border-white/15 bg-white/10 text-white/50",
   };
 
   return (
@@ -133,47 +183,164 @@ export default function AgendaPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showSummary, setShowSummary] = useState(true);
+  const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [filter, setFilter] = useState<
-    "all" | "today" | "confirmed" | "pending"
+    "all" | "today" | "paid" | "confirmed" | "pending"
   >("all");
 
-  useEffect(() => {
-    const loadAppointments = async () => {
-      setLoading(true);
-      setLoadError(null);
+  const today = todayDate();
 
-      const { data, error } = await supabase
-        .from("appointments")
-        .select(
-          `
-          *,
-          customers (
-            first_name,
-            last_name,
-            phone_raw,
-            phone_normalized,
-            instagram
-          )
-        `,
+  const loadAppointments = async () => {
+    setLoading(true);
+    setLoadError(null);
+
+    const { data, error } = await supabase
+      .from("appointments")
+      .select(
+        `
+        *,
+        customers (
+          first_name,
+          last_name,
+          phone_raw,
+          phone_normalized,
+          instagram
         )
-        .order("appointment_date", { ascending: true })
-        .order("start_time", { ascending: true });
+      `,
+      )
+      .order("appointment_date", { ascending: true })
+      .order("start_time", { ascending: true });
 
-      if (error) {
-        console.error("Error loading appointments:", error);
-        setLoadError("No pudimos cargar los turnos.");
-        setLoading(false);
-        return;
-      }
-
-      setAppointments((data || []) as Appointment[]);
+    if (error) {
+      console.error("Error loading appointments:", error);
+      setLoadError("No pudimos cargar los turnos.");
       setLoading(false);
-    };
+      return;
+    }
 
+    setAppointments((data || []) as Appointment[]);
+    setLoading(false);
+  };
+
+  useEffect(() => {
     loadAppointments();
   }, []);
 
-  const today = "2026-06-18";
+  const updateAppointmentStatus = async (
+    appointment: Appointment,
+    status: AppointmentStatus,
+    extraData?: Partial<Appointment>,
+  ) => {
+    setActionLoadingId(appointment.id);
+
+    const { error } = await supabase
+      .from("appointments")
+      .update({
+        status,
+        ...(extraData || {}),
+      })
+      .eq("id", appointment.id);
+
+    if (error) {
+      console.error("Error updating appointment:", error);
+      alert("No pudimos actualizar el turno.");
+      setActionLoadingId(null);
+      return false;
+    }
+
+    setAppointments((current) =>
+      current.map((item) =>
+        item.id === appointment.id
+          ? {
+              ...item,
+              status,
+              ...(extraData || {}),
+            }
+          : item,
+      ),
+    );
+
+    setActionLoadingId(null);
+    return true;
+  };
+
+  const handleConfirm = async (appointment: Appointment) => {
+    const ok = await updateAppointmentStatus(appointment, "confirmed");
+
+    if (!ok) return;
+
+    const customerName = getCustomerName(appointment);
+    const serviceEmoji = appointment.service_emoji_snapshot || "💅";
+    const serviceName = appointment.service_name_snapshot || "Turno";
+
+    const message = `Hola ${customerName}! 🌸 Te confirmamos tu turno en Magnolia Beauty ✅
+
+Servicio: ${serviceEmoji} ${serviceName}
+Día: ${formatDate(appointment.appointment_date)}
+Horario: ${formatTime(appointment.start_time)}
+
+Tu seña ya figura pagada.
+Te esperamos 💕`;
+
+    openWhatsapp(appointment.customers?.phone_raw, message);
+  };
+
+  const handleMarkCompleted = async (appointment: Appointment) => {
+    const ok = confirm("¿Marcar este turno como atendido?");
+    if (!ok) return;
+
+    const remaining =
+      appointment.total_price_snapshot -
+      appointment.deposit_paid -
+      appointment.remaining_paid;
+
+    await updateAppointmentStatus(appointment, "completed", {
+      remaining_paid: appointment.remaining_paid + Math.max(remaining, 0),
+      remaining_payment_method:
+        appointment.remaining_payment_method || "manual",
+    });
+  };
+
+  const handleCancel = async (appointment: Appointment) => {
+    const ok = confirm("¿Seguro querés cancelar este turno?");
+    if (!ok) return;
+
+    const updated = await updateAppointmentStatus(appointment, "cancelled");
+
+    if (!updated) return;
+
+    const customerName = getCustomerName(appointment);
+    const serviceEmoji = appointment.service_emoji_snapshot || "💅";
+    const serviceName = appointment.service_name_snapshot || "Turno";
+
+    const message = `Hola ${customerName}! 🌸 Te escribimos de Magnolia Beauty.
+
+Tenemos que cancelar/reprogramar tu turno:
+
+Servicio: ${serviceEmoji} ${serviceName}
+Día: ${formatDate(appointment.appointment_date)}
+Horario: ${formatTime(appointment.start_time)}
+
+Escribinos por acá y coordinamos un nuevo horario 💕`;
+
+    openWhatsapp(appointment.customers?.phone_raw, message);
+  };
+
+  const handleGenericWhatsapp = (appointment: Appointment) => {
+    const customerName = getCustomerName(appointment);
+    const serviceEmoji = appointment.service_emoji_snapshot || "💅";
+    const serviceName = appointment.service_name_snapshot || "Turno";
+
+    const message = `Hola ${customerName}! 🌸 Te escribimos de Magnolia Beauty por tu turno.
+
+Servicio: ${serviceEmoji} ${serviceName}
+Día: ${formatDate(appointment.appointment_date)}
+Horario: ${formatTime(appointment.start_time)}
+
+Cualquier cosa escribinos por acá 💕`;
+
+    openWhatsapp(appointment.customers?.phone_raw, message);
+  };
 
   const filteredAppointments = useMemo(() => {
     if (filter === "today") {
@@ -182,11 +349,15 @@ export default function AgendaPage() {
       );
     }
 
+    if (filter === "paid") {
+      return appointments.filter((appointment) =>
+        ["paid", "deposit_paid"].includes(appointment.status),
+      );
+    }
+
     if (filter === "confirmed") {
       return appointments.filter((appointment) =>
-        ["deposit_paid", "confirmed", "rescheduled"].includes(
-          appointment.status,
-        ),
+        ["confirmed", "rescheduled"].includes(appointment.status),
       );
     }
 
@@ -197,7 +368,7 @@ export default function AgendaPage() {
     }
 
     return appointments;
-  }, [appointments, filter]);
+  }, [appointments, filter, today]);
 
   const totalDeposits = filteredAppointments.reduce(
     (acc, item) => acc + (item.deposit_paid || 0),
@@ -223,68 +394,6 @@ export default function AgendaPage() {
 
   const totalHours = Math.floor(totalMinutes / 60);
   const totalRemainder = totalMinutes % 60;
-
-  const handleMarkCompleted = async (appointment: Appointment) => {
-    const remaining =
-      appointment.total_price_snapshot -
-      appointment.deposit_paid -
-      appointment.remaining_paid;
-
-    const { error } = await supabase
-      .from("appointments")
-      .update({
-        status: "completed",
-        remaining_paid: appointment.remaining_paid + Math.max(remaining, 0),
-        remaining_payment_method:
-          appointment.remaining_payment_method || "manual",
-      })
-      .eq("id", appointment.id);
-
-    if (error) {
-      console.error("Error completing appointment:", error);
-      alert("No pudimos marcar el turno como atendido.");
-      return;
-    }
-
-    setAppointments((current) =>
-      current.map((item) =>
-        item.id === appointment.id
-          ? {
-              ...item,
-              status: "completed",
-              remaining_paid:
-                appointment.remaining_paid + Math.max(remaining, 0),
-              remaining_payment_method:
-                appointment.remaining_payment_method || "manual",
-            }
-          : item,
-      ),
-    );
-  };
-
-  const handleCancel = async (appointment: Appointment) => {
-    const ok = confirm("¿Seguro querés cancelar este turno?");
-    if (!ok) return;
-
-    const { error } = await supabase
-      .from("appointments")
-      .update({
-        status: "cancelled",
-      })
-      .eq("id", appointment.id);
-
-    if (error) {
-      console.error("Error cancelling appointment:", error);
-      alert("No pudimos cancelar el turno.");
-      return;
-    }
-
-    setAppointments((current) =>
-      current.map((item) =>
-        item.id === appointment.id ? { ...item, status: "cancelled" } : item,
-      ),
-    );
-  };
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-[linear-gradient(160deg,#2A0E1E_0%,#4A1035_60%,#2A0E1E_100%)] px-5 py-6 text-white">
@@ -370,6 +479,7 @@ export default function AgendaPage() {
               {[
                 { key: "all", label: "Todos" },
                 { key: "today", label: "Hoy" },
+                { key: "paid", label: "Seña pagada" },
                 { key: "confirmed", label: "Confirmados" },
                 { key: "pending", label: "Pendientes" },
               ].map((item) => (
@@ -377,7 +487,12 @@ export default function AgendaPage() {
                   key={item.key}
                   onClick={() =>
                     setFilter(
-                      item.key as "all" | "today" | "confirmed" | "pending",
+                      item.key as
+                        | "all"
+                        | "today"
+                        | "paid"
+                        | "confirmed"
+                        | "pending",
                     )
                   }
                   className={[
@@ -414,10 +529,7 @@ export default function AgendaPage() {
           {!loading && !loadError && filteredAppointments.length > 0 && (
             <div className="flex flex-col gap-3">
               {filteredAppointments.map((appointment) => {
-                const customerName = appointment.customers
-                  ? `${appointment.customers.first_name} ${appointment.customers.last_name}`
-                  : "Clienta sin datos";
-
+                const customerName = getCustomerName(appointment);
                 const phone = appointment.customers?.phone_raw || "-";
 
                 const remaining =
@@ -425,9 +537,20 @@ export default function AgendaPage() {
                   appointment.deposit_paid -
                   appointment.remaining_paid;
 
-                const whatsappHref = appointment.customers?.phone_normalized
-                  ? `https://wa.me/${appointment.customers.phone_normalized}`
-                  : "#";
+                const isLoading = actionLoadingId === appointment.id;
+                const canConfirm = ["paid", "deposit_paid"].includes(
+                  appointment.status,
+                );
+                const canComplete = ["confirmed", "rescheduled"].includes(
+                  appointment.status,
+                );
+                const canCancel = [
+                  "pending_payment",
+                  "paid",
+                  "deposit_paid",
+                  "confirmed",
+                  "rescheduled",
+                ].includes(appointment.status);
 
                 return (
                   <div
@@ -491,48 +614,52 @@ export default function AgendaPage() {
                         </div>
 
                         <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-end">
-                          <button
-                            onClick={() => handleMarkCompleted(appointment)}
-                            disabled={appointment.status === "completed"}
-                            className={[
-                              "inline-flex items-center justify-center gap-1 rounded-xl border px-3 py-2 text-xs font-bold",
-                              appointment.status === "completed"
-                                ? "cursor-not-allowed border-blue-300/30 bg-blue-400/15 text-blue-200"
-                                : "border-emerald-300/30 bg-emerald-400/15 text-emerald-200",
-                            ].join(" ")}
-                          >
-                            <Check size={13} />
-                            Atendido
-                          </button>
+                          {canConfirm && (
+                            <button
+                              onClick={() => handleConfirm(appointment)}
+                              disabled={isLoading}
+                              className="inline-flex items-center justify-center gap-1 rounded-xl border border-emerald-300/30 bg-emerald-400/15 px-3 py-2 text-xs font-bold text-emerald-200 disabled:cursor-wait disabled:opacity-50"
+                            >
+                              <BadgeCheck size={13} />
+                              Confirmar + WhatsApp
+                            </button>
+                          )}
+
+                          {canComplete && (
+                            <button
+                              onClick={() => handleMarkCompleted(appointment)}
+                              disabled={isLoading}
+                              className="inline-flex items-center justify-center gap-1 rounded-xl border border-blue-300/30 bg-blue-400/15 px-3 py-2 text-xs font-bold text-blue-200 disabled:cursor-wait disabled:opacity-50"
+                            >
+                              <Check size={13} />
+                              Marcar atendido
+                            </button>
+                          )}
 
                           <button className="inline-flex items-center justify-center gap-1 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-xs font-bold text-white/70">
                             <Edit size={13} />
                             Reagendar
                           </button>
 
-                          <a
-                            href={whatsappHref}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center justify-center gap-1 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-xs font-bold text-white/70"
+                          <button
+                            onClick={() => handleGenericWhatsapp(appointment)}
+                            disabled={isLoading}
+                            className="inline-flex items-center justify-center gap-1 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-xs font-bold text-white/70 disabled:cursor-wait disabled:opacity-50"
                           >
                             <MessageSquare size={13} />
                             WhatsApp
-                          </a>
-
-                          <button
-                            onClick={() => handleCancel(appointment)}
-                            disabled={appointment.status === "cancelled"}
-                            className={[
-                              "inline-flex items-center justify-center gap-1 rounded-xl border px-3 py-2 text-xs font-bold",
-                              appointment.status === "cancelled"
-                                ? "cursor-not-allowed border-red-300/20 bg-red-400/10 text-red-200/50"
-                                : "border-red-300/30 bg-red-400/15 text-red-200",
-                            ].join(" ")}
-                          >
-                            <X size={13} />
-                            Cancelar
                           </button>
+
+                          {canCancel && (
+                            <button
+                              onClick={() => handleCancel(appointment)}
+                              disabled={isLoading}
+                              className="inline-flex items-center justify-center gap-1 rounded-xl border border-red-300/30 bg-red-400/15 px-3 py-2 text-xs font-bold text-red-200 disabled:cursor-wait disabled:opacity-50"
+                            >
+                              <X size={13} />
+                              Cancelar + WhatsApp
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>

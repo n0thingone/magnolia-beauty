@@ -7,15 +7,24 @@ import { supabase } from "@/lib/supabase";
 import {
   ArrowLeft,
   CalendarDays,
+  CheckCircle,
   Copy,
   Download,
+  Eye,
   Share2,
   Sparkles,
 } from "lucide-react";
 
 const ALL_SLOTS = ["10:30", "12:00", "14:00", "15:30", "17:00"];
 
-const BLOCKING_STATUSES = ["pending_payment", "paid", "confirmed"];
+const BLOCKING_STATUSES = [
+  "pending_payment",
+  "paid",
+  "deposit_paid",
+  "confirmed",
+  "rescheduled",
+  "completed",
+];
 
 const DAYS_ES = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 
@@ -98,6 +107,7 @@ function getDatesForMode(mode: RangeMode) {
 
   if (mode === "tomorrow") {
     const tomorrow = addDays(today, 1);
+
     return tomorrow.getDay() === 0
       ? [toDateInputValue(addDays(tomorrow, 1))]
       : [toDateInputValue(tomorrow)];
@@ -127,13 +137,21 @@ function groupOccupiedByDate(appointments: Appointment[]) {
   }, {});
 }
 
+function blobFromCanvas(canvas: HTMLCanvasElement) {
+  return new Promise<Blob | null>((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), "image/png");
+  });
+}
+
 export default function AdminHistoriasPage() {
   const storyRef = useRef<HTMLDivElement | null>(null);
 
   const [mode, setMode] = useState<RangeMode>("week");
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
+  const [generatedBlob, setGeneratedBlob] = useState<Blob | null>(null);
 
   const dates = useMemo(() => getDatesForMode(mode), [mode]);
 
@@ -143,6 +161,20 @@ export default function AdminHistoriasPage() {
   );
 
   const subtitle = useMemo(() => getStorySubtitle(mode, dates), [mode, dates]);
+
+  const totalAvailable = useMemo(() => {
+    return dates.reduce((acc, date) => {
+      const occupied = occupiedByDate[date] || [];
+      return acc + ALL_SLOTS.filter((slot) => !occupied.includes(slot)).length;
+    }, 0);
+  }, [dates, occupiedByDate]);
+
+  const totalOccupied = useMemo(() => {
+    return dates.reduce((acc, date) => {
+      const occupied = occupiedByDate[date] || [];
+      return acc + occupied.length;
+    }, 0);
+  }, [dates, occupiedByDate]);
 
   const instagramText = useMemo(() => {
     const lines = [
@@ -173,6 +205,8 @@ export default function AdminHistoriasPage() {
   useEffect(() => {
     const loadAppointments = async () => {
       setLoading(true);
+      setGeneratedUrl(null);
+      setGeneratedBlob(null);
 
       const from = dates[0];
       const to = dates[dates.length - 1];
@@ -199,78 +233,102 @@ export default function AdminHistoriasPage() {
     loadAppointments();
   }, [dates]);
 
-  const createCanvas = async () => {
+  useEffect(() => {
+    return () => {
+      if (generatedUrl) URL.revokeObjectURL(generatedUrl);
+    };
+  }, [generatedUrl]);
+
+  const createStoryFile = async () => {
     if (!storyRef.current) return null;
 
-    return html2canvas(storyRef.current, {
+    const canvas = await html2canvas(storyRef.current, {
       backgroundColor: null,
-      scale: 3,
+      scale: 1,
       useCORS: true,
+      width: 1080,
+      height: 1920,
+      windowWidth: 1080,
+      windowHeight: 1920,
     });
+
+    const blob = await blobFromCanvas(canvas);
+
+    if (!blob) return null;
+
+    const url = URL.createObjectURL(blob);
+
+    return { blob, url };
+  };
+
+  const generateStory = async () => {
+    setGenerating(true);
+
+    if (generatedUrl) URL.revokeObjectURL(generatedUrl);
+
+    const result = await createStoryFile();
+
+    if (!result) {
+      alert("No pudimos generar la imagen.");
+      setGenerating(false);
+      return;
+    }
+
+    setGeneratedBlob(result.blob);
+    setGeneratedUrl(result.url);
+    setGenerating(false);
   };
 
   const downloadStory = async () => {
-    setSaving(true);
+    let blob = generatedBlob;
 
-    const canvas = await createCanvas();
-
-    if (!canvas) {
-      setSaving(false);
-      return;
+    if (!blob) {
+      const result = await createStoryFile();
+      if (!result) return;
+      blob = result.blob;
+      setGeneratedBlob(result.blob);
+      setGeneratedUrl(result.url);
     }
 
     const link = document.createElement("a");
     link.download = `magnolia-turnos-${Date.now()}.png`;
-    link.href = canvas.toDataURL("image/png");
+    link.href = URL.createObjectURL(blob);
     link.click();
-
-    setSaving(false);
+    URL.revokeObjectURL(link.href);
   };
 
   const shareStory = async () => {
-    setSaving(true);
+    let blob = generatedBlob;
 
-    const canvas = await createCanvas();
-
-    if (!canvas) {
-      setSaving(false);
-      return;
+    if (!blob) {
+      const result = await createStoryFile();
+      if (!result) return;
+      blob = result.blob;
+      setGeneratedBlob(result.blob);
+      setGeneratedUrl(result.url);
     }
 
-    canvas.toBlob(async (blob) => {
-      if (!blob) {
-        setSaving(false);
-        return;
+    const file = new File([blob], `magnolia-turnos-${Date.now()}.png`, {
+      type: "image/png",
+    });
+
+    const nav = navigator as Navigator & {
+      canShare?: (data: ShareData) => boolean;
+    };
+
+    if (navigator.share && (!nav.canShare || nav.canShare({ files: [file] }))) {
+      try {
+        await navigator.share({
+          title: "Turnos disponibles Magnolia Beauty",
+          text: "Turnos disponibles Magnolia Beauty 🌸",
+          files: [file],
+        });
+      } catch (error) {
+        console.error("Share cancelled/error:", error);
       }
-
-      const file = new File([blob], `magnolia-turnos-${Date.now()}.png`, {
-        type: "image/png",
-      });
-
-      const nav = navigator as Navigator & {
-        canShare?: (data: ShareData) => boolean;
-      };
-
-      if (navigator.share && (!nav.canShare || nav.canShare({ files: [file] }))) {
-        try {
-          await navigator.share({
-            title: "Turnos disponibles Magnolia Beauty",
-            text: "Turnos disponibles Magnolia Beauty 🌸",
-            files: [file],
-          });
-        } catch (error) {
-          console.error("Share cancelled/error:", error);
-        }
-      } else {
-        const link = document.createElement("a");
-        link.download = file.name;
-        link.href = URL.createObjectURL(blob);
-        link.click();
-        URL.revokeObjectURL(link.href);
-      }
-
-      setSaving(false);
-    }, "image/png");
+    } else {
+      await downloadStory();
+    }
   };
 
   const copyText = async () => {
@@ -283,249 +341,267 @@ export default function AdminHistoriasPage() {
       <div className="pointer-events-none absolute right-[-140px] top-[-120px] h-[360px] w-[360px] rounded-full bg-[radial-gradient(circle,rgba(229,53,170,0.18)_0%,transparent_70%)]" />
       <div className="pointer-events-none absolute bottom-[-140px] left-[-120px] h-[320px] w-[320px] rounded-full bg-[radial-gradient(circle,rgba(229,53,170,0.10)_0%,transparent_70%)]" />
 
-      <div className="relative z-[1] mx-auto max-w-[1100px]">
-        <header className="mb-7 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <Link
-              href="/admin"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/15 bg-white/10 text-white/85 backdrop-blur-md transition hover:bg-white/15"
-            >
-              <ArrowLeft size={17} />
-            </Link>
+      <div className="relative z-[1] mx-auto max-w-[520px]">
+        <header className="mb-6 flex items-center gap-3">
+          <Link
+            href="/admin"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/15 bg-white/10 text-white/85 backdrop-blur-md transition hover:bg-white/15"
+          >
+            <ArrowLeft size={17} />
+          </Link>
 
-            <div>
-              <div className="text-[11px] font-bold uppercase tracking-[3px] text-[#FAD8F0]">
-                Magnolia Beauty
-              </div>
-
-              <h1 className="mt-1 font-serif text-[32px] font-bold leading-none text-white">
-                Historias de Turnos ✨
-              </h1>
-
-              <p className="mt-2 text-sm text-white/45">
-                Generá una historia lista para Instagram con horarios reales.
-              </p>
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-[3px] text-[#FAD8F0]">
+              Magnolia Beauty
             </div>
+
+            <h1 className="mt-1 font-serif text-[30px] font-bold leading-none text-white">
+              Historias
+            </h1>
+
+            <p className="mt-2 text-sm text-white/45">
+              Generá una imagen lista para subir a Instagram.
+            </p>
           </div>
         </header>
 
-        <section className="grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
-          <div className="flex flex-col gap-5">
-            <div className="rounded-[24px] border border-white/15 bg-white/10 p-5 backdrop-blur-md">
-              <div className="mb-4 flex items-center gap-2">
-                <Sparkles size={18} className="text-[#FAD8F0]" />
-                <h2 className="font-serif text-2xl font-bold">
-                  Configurar historia
-                </h2>
-              </div>
+        <section className="rounded-[26px] border border-white/15 bg-white/10 p-5 backdrop-blur-md">
+          <div className="mb-5 flex items-center gap-2">
+            <Sparkles size={18} className="text-[#FAD8F0]" />
+            <h2 className="font-serif text-2xl font-bold">
+              Crear historia de turnos
+            </h2>
+          </div>
+
+          <div className="mb-5">
+            <div className="mb-3 text-[11px] font-bold uppercase tracking-[2px] text-white/35">
+              Rango
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { id: "today", label: "Hoy" },
+                { id: "tomorrow", label: "Mañana" },
+                { id: "week", label: "Semana" },
+              ].map((item) => {
+                const active = mode === item.id;
+
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => setMode(item.id as RangeMode)}
+                    className={[
+                      "rounded-2xl px-4 py-3 text-sm font-bold transition",
+                      active
+                        ? "bg-[#E535AA] text-white shadow-[0_6px_22px_rgba(229,53,170,0.35)]"
+                        : "border border-white/15 bg-white/10 text-white/60 hover:bg-white/15",
+                    ].join(" ")}
+                  >
+                    {item.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
+            <div className="flex items-start gap-3">
+              <CalendarDays size={18} className="mt-1 text-[#FAD8F0]" />
 
               <div>
-                <div className="mb-3 text-[11px] font-bold uppercase tracking-[2px] text-white/35">
-                  Rango
-                </div>
+                <div className="text-sm font-bold text-white">{subtitle}</div>
 
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { id: "today", label: "Hoy" },
-                    { id: "tomorrow", label: "Mañana" },
-                    { id: "week", label: "Semana" },
-                  ].map((item) => {
-                    const active = mode === item.id;
-
-                    return (
-                      <button
-                        key={item.id}
-                        onClick={() => setMode(item.id as RangeMode)}
-                        className={[
-                          "rounded-2xl px-4 py-3 text-sm font-bold transition",
-                          active
-                            ? "bg-[#E535AA] text-white shadow-[0_6px_22px_rgba(229,53,170,0.35)]"
-                            : "border border-white/15 bg-white/10 text-white/60 hover:bg-white/15",
-                        ].join(" ")}
-                      >
-                        {item.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="mt-5 rounded-2xl border border-white/10 bg-white/10 p-4">
-                <div className="text-[11px] font-bold uppercase tracking-[2px] text-white/35">
-                  Estado
-                </div>
-
-                <div className="mt-2 text-sm leading-6 text-white/60">
+                <div className="mt-1 text-xs leading-5 text-white/45">
                   {loading
                     ? "Cargando turnos..."
-                    : `Usando ${appointments.length} turnos bloqueados para esta historia.`}
+                    : `${totalAvailable} disponibles · ${totalOccupied} ocupados`}
                 </div>
 
-                <div className="mt-3 text-xs leading-5 text-white/35">
-                  Se marcan como ocupados: pendiente de pago, seña pagada y
-                  confirmados.
+                <div className="mt-2 text-xs leading-5 text-white/35">
+                  Ocupa horarios con seña pagada, confirmados, atendidos,
+                  pendientes de pago y reagendados.
                 </div>
               </div>
+            </div>
+          </div>
 
-              <div className="mt-2 grid gap-3">
-                <button
-                  disabled={saving}
-                  onClick={downloadStory}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#E535AA] px-5 py-4 text-sm font-bold text-white shadow-[0_6px_24px_rgba(229,53,170,0.35)] transition hover:scale-[1.01] disabled:cursor-wait disabled:opacity-60"
+          <button
+            disabled={loading || generating}
+            onClick={generateStory}
+            className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#E535AA] px-5 py-4 text-sm font-bold text-white shadow-[0_6px_24px_rgba(229,53,170,0.35)] transition hover:scale-[1.01] disabled:cursor-wait disabled:opacity-60"
+          >
+            {generating ? "Generando..." : "Generar historia"}
+            <Sparkles size={17} />
+          </button>
+
+          {generatedUrl && (
+            <div className="mt-5 rounded-[22px] border border-emerald-300/25 bg-emerald-400/10 p-4">
+              <div className="flex items-center gap-2 text-sm font-bold text-emerald-100">
+                <CheckCircle size={17} />
+                Historia generada ✅
+              </div>
+
+              <div className="mt-3 grid gap-2">
+                <a
+                  href={generatedUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-white/15 px-5 py-4 text-sm font-bold text-white transition hover:bg-white/20"
                 >
-                  <Download size={17} />
-                  Guardar imagen
-                </button>
+                  <Eye size={17} />
+                  Ver imagen
+                </a>
 
                 <button
-                  disabled={saving}
                   onClick={shareStory}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/10 px-5 py-4 text-sm font-bold text-white/80 transition hover:bg-white/15 disabled:cursor-wait disabled:opacity-60"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#25D366] px-5 py-4 text-sm font-bold text-white transition hover:scale-[1.01]"
                 >
                   <Share2 size={17} />
                   Compartir
                 </button>
 
                 <button
+                  onClick={downloadStory}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/10 px-5 py-4 text-sm font-bold text-white/80 transition hover:bg-white/15"
+                >
+                  <Download size={17} />
+                  Guardar imagen
+                </button>
+
+                <button
                   onClick={copyText}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/10 px-5 py-4 text-sm font-bold text-white/80 transition hover:bg-white/15"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/10 px-5 py-4 text-sm font-bold text-white/80 transition hover:bg-white/15"
                 >
                   <Copy size={17} />
                   Copiar texto
                 </button>
               </div>
             </div>
+          )}
+        </section>
+      </div>
+
+      <div
+        aria-hidden="true"
+        className="fixed left-[-2000px] top-0 z-[-1] overflow-hidden"
+      >
+        <div
+          ref={storyRef}
+          style={{
+            width: 1080,
+            height: 1920,
+          }}
+          className="relative overflow-hidden bg-[radial-gradient(circle_at_85%_8%,#F075B5_0%,transparent_27%),linear-gradient(160deg,#2A0E1E_0%,#68174B_56%,#210817_100%)] px-[72px] py-[92px] text-white"
+        >
+          <div className="absolute left-[-180px] top-[170px] h-[360px] w-[360px] rounded-full bg-[#FAD8F0]/20 blur-[80px]" />
+          <div className="absolute bottom-[-170px] right-[-160px] h-[460px] w-[460px] rounded-full bg-[#E535AA]/25 blur-[90px]" />
+          <div className="absolute right-[75px] top-[300px] text-[54px] text-white/70">
+            ✦
+          </div>
+          <div className="absolute left-[90px] top-[560px] text-[32px] text-[#FAD8F0]/70">
+            ✦
           </div>
 
-          <div className="rounded-[28px] border border-white/15 bg-white/10 p-4 backdrop-blur-md">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div>
-                <div className="text-[11px] font-bold uppercase tracking-[2px] text-white/35">
-                  Vista previa
-                </div>
-                <h2 className="mt-1 font-serif text-2xl font-bold text-white">
-                  Formato historia 9:16
-                </h2>
-              </div>
-
-              <CalendarDays size={22} className="text-[#FAD8F0]" />
+          <div className="relative z-[1] text-center">
+            <div className="text-[34px] font-bold uppercase tracking-[12px] text-white/80">
+              Magnolia Beauty 🌸
             </div>
 
-            <div className="flex justify-center">
-              <div
-                ref={storyRef}
-                className="relative h-[720px] w-[405px] overflow-hidden rounded-[34px] bg-[radial-gradient(circle_at_80%_10%,#EF6BAE_0%,transparent_30%),linear-gradient(160deg,#2A0E1E_0%,#68174B_55%,#2A0E1E_100%)] px-6 py-8 text-white shadow-2xl"
-              >
-                <div className="pointer-events-none absolute left-[-70px] top-[80px] h-[180px] w-[180px] rounded-full bg-[#FAD8F0]/20 blur-3xl" />
-                <div className="pointer-events-none absolute bottom-[-70px] right-[-70px] h-[220px] w-[220px] rounded-full bg-[#E535AA]/25 blur-3xl" />
+            <div className="mx-auto mt-[34px] h-px w-[270px] bg-[#FAD8F0]/45" />
 
-                <div className="relative z-[1] text-center">
-                  <div className="text-[15px] font-bold uppercase tracking-[6px] text-white/80">
-                    Magnolia Beauty 🌸
-                  </div>
+            <h1 className="mt-[60px] font-serif text-[128px] font-bold leading-[0.9] tracking-wide text-white drop-shadow">
+              TURNOS
+              <br />
+              DISPONIBLES
+            </h1>
 
-                  <div className="mx-auto mt-4 h-px w-28 bg-[#FAD8F0]/45" />
+            <div className="mt-[36px] text-[38px] font-semibold text-[#FAD8F0]">
+              ✦ {subtitle} ✦
+            </div>
+          </div>
 
-                  <h1 className="mt-6 font-serif text-[54px] font-bold leading-[0.9] tracking-wide text-white drop-shadow">
-                    TURNOS
-                    <br />
-                    DISPONIBLES
-                  </h1>
+          <div
+            className={[
+              "relative z-[1] mt-[78px] grid gap-[26px]",
+              dates.length === 1 ? "grid-cols-1" : "grid-cols-3",
+            ].join(" ")}
+          >
+            {dates.map((date) => {
+              const occupied = occupiedByDate[date] || [];
 
-                  <div className="mt-4 text-[17px] font-semibold text-[#FAD8F0]">
-                    ✦ {subtitle} ✦
-                  </div>
-                </div>
-
+              return (
                 <div
-                  className={[
-                    "relative z-[1] mt-7 grid gap-3",
-                    dates.length === 1 ? "grid-cols-1" : "grid-cols-3",
-                  ].join(" ")}
+                  key={date}
+                  className="rounded-[46px] border border-[#FAD8F0]/35 bg-white/10 p-[26px] shadow-[0_20px_70px_rgba(0,0,0,0.22)] backdrop-blur-md"
                 >
-                  {dates.map((date) => {
-                    const occupied = occupiedByDate[date] || [];
+                  <div className="mb-[28px] text-center">
+                    <div className="text-[38px]">🗓️</div>
+                    <div className="mt-[10px] text-[38px] font-bold uppercase tracking-[6px]">
+                      {formatDayTitle(date)}
+                    </div>
+                  </div>
 
-                    return (
-                      <div
-                        key={date}
-                        className="rounded-[22px] border border-[#FAD8F0]/35 bg-white/10 p-3 shadow-[0_12px_40px_rgba(0,0,0,0.18)] backdrop-blur-md"
-                      >
-                        <div className="mb-3 text-center">
-                          <div className="text-[20px]">🗓️</div>
-                          <div className="mt-1 text-[17px] font-bold uppercase tracking-[3px]">
-                            {formatDayTitle(date)}
-                          </div>
-                        </div>
+                  <div className="flex flex-col gap-[18px]">
+                    {ALL_SLOTS.map((slot) => {
+                      const isOccupied = occupied.includes(slot);
 
-                        <div className="flex flex-col gap-2">
-                          {ALL_SLOTS.map((slot) => {
-                            const isOccupied = occupied.includes(slot);
-
-                            return (
+                      return (
+                        <div
+                          key={slot}
+                          className={[
+                            "rounded-[30px] px-[28px] py-[24px]",
+                            isOccupied
+                              ? "bg-white/55 text-zinc-600"
+                              : "bg-white/95 text-[#C3167E]",
+                          ].join(" ")}
+                        >
+                          <div className="flex items-center justify-between gap-[18px]">
+                            <div>
                               <div
-                                key={slot}
                                 className={[
-                                  "rounded-2xl px-3 py-2",
-                                  isOccupied
-                                    ? "bg-white/45 text-zinc-600"
-                                    : "bg-white/90 text-[#C3167E]",
+                                  "text-[42px] font-black leading-none",
+                                  isOccupied ? "line-through" : "",
                                 ].join(" ")}
                               >
-                                <div className="flex items-center justify-between gap-2">
-                                  <div>
-                                    <div
-                                      className={[
-                                        "text-[17px] font-black leading-none",
-                                        isOccupied && "line-through",
-                                      ]
-                                        .filter(Boolean)
-                                        .join(" ")}
-                                    >
-                                      {slot}
-                                    </div>
-                                    <div className="mt-1 text-[11px] font-bold">
-                                      {isOccupied ? "Ocupado" : "Disponible"}
-                                    </div>
-                                  </div>
-
-                                  <div
-                                    className={[
-                                      "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[16px] font-black text-white",
-                                      isOccupied
-                                        ? "bg-zinc-400"
-                                        : "bg-[#E535AA]",
-                                    ].join(" ")}
-                                  >
-                                    {isOccupied ? "×" : "✓"}
-                                  </div>
-                                </div>
+                                {slot}
                               </div>
-                            );
-                          })}
+                              <div className="mt-[10px] text-[24px] font-bold">
+                                {isOccupied ? "Ocupado" : "Disponible"}
+                              </div>
+                            </div>
+
+                            <div
+                              className={[
+                                "flex h-[62px] w-[62px] shrink-0 items-center justify-center rounded-full text-[42px] font-black text-white",
+                                isOccupied ? "bg-zinc-400" : "bg-[#E535AA]",
+                              ].join(" ")}
+                            >
+                              {isOccupied ? "×" : "✓"}
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="relative z-[1] mt-7 rounded-[28px] border border-[#FAD8F0]/35 bg-[linear-gradient(135deg,#E535AA,#A91473)] p-5 text-center shadow-[0_12px_40px_rgba(229,53,170,0.30)]">
-                  <div className="font-serif text-[33px] font-bold leading-none">
-                    Reservá tu turno
-                  </div>
-
-                  <div className="mx-auto mt-3 inline-flex rounded-full bg-[#2A0E1E]/45 px-6 py-2 font-serif text-[25px] italic text-[#FAD8F0]">
-                    por la app 💅
+                      );
+                    })}
                   </div>
                 </div>
+              );
+            })}
+          </div>
 
-                <div className="relative z-[1] mt-6 text-center text-[13px] font-medium text-white/65">
-                  🌐 magnolia-beauty-iota.vercel.app
-                </div>
-              </div>
+          <div className="relative z-[1] mt-[80px] rounded-[58px] border border-[#FAD8F0]/35 bg-[linear-gradient(135deg,#E535AA,#A91473)] p-[48px] text-center shadow-[0_18px_70px_rgba(229,53,170,0.34)]">
+            <div className="font-serif text-[76px] font-bold leading-none">
+              Reservá tu turno
+            </div>
+
+            <div className="mx-auto mt-[28px] inline-flex rounded-full bg-[#2A0E1E]/45 px-[72px] py-[22px] font-serif text-[54px] italic text-[#FAD8F0]">
+              por la app 💅
             </div>
           </div>
-        </section>
+
+          <div className="relative z-[1] mt-[58px] text-center text-[30px] font-medium text-white/65">
+            🌐 magnolia-beauty-iota.vercel.app
+          </div>
+        </div>
       </div>
     </main>
   );
