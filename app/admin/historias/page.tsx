@@ -54,6 +54,13 @@ type ShareDataWithFiles = ShareData & {
   files?: File[];
 };
 
+const normalizeStatus = (status: string) => String(status || "").trim().toLowerCase();
+
+const normalizeTime = (time: string) => String(time || "").slice(0, 5);
+
+const isBlockingStatus = (status: string) =>
+  BLOCKING_STATUSES.includes(normalizeStatus(status));
+
 function toDateInputValue(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -130,8 +137,10 @@ function getStorySubtitle(mode: RangeMode, dates: string[]) {
 
 function groupOccupiedByDate(appointments: Appointment[]) {
   return appointments.reduce<Record<string, string[]>>((acc, appointment) => {
+    if (!isBlockingStatus(appointment.status)) return acc;
+
     const date = appointment.appointment_date;
-    const time = String(appointment.start_time).slice(0, 5);
+    const time = normalizeTime(appointment.start_time);
 
     if (!acc[date]) acc[date] = [];
     if (!acc[date].includes(time)) acc[date].push(time);
@@ -227,7 +236,7 @@ export default function AdminHistoriasPage() {
     }, 0);
   }, [dates, occupiedByDate]);
 
-  const instagramText = useMemo(() => {
+  const buildInstagramText = (occupiedMap: Record<string, string[]>) => {
     const lines = [
       "MAGNOLIA BEAUTY 🌸",
       "",
@@ -240,7 +249,7 @@ export default function AdminHistoriasPage() {
       lines.push(`${formatDayTitle(date)}`);
 
       ALL_SLOTS.forEach((slot) => {
-        const occupied = (occupiedByDate[date] || []).includes(slot);
+        const occupied = (occupiedMap[date] || []).includes(slot);
         lines.push(`${slot} ${occupied ? "❌ Ocupado" : "✅ Disponible"}`);
       });
 
@@ -251,7 +260,12 @@ export default function AdminHistoriasPage() {
     lines.push("magnolia-beauty-iota.vercel.app");
 
     return lines.join("\n");
-  }, [dates, occupiedByDate, subtitle]);
+  };
+
+  const instagramText = useMemo(
+    () => buildInstagramText(occupiedByDate),
+    [occupiedByDate, subtitle, dates],
+  );
 
   const loadAppointments = useCallback(async () => {
     setLoading(true);
@@ -264,7 +278,8 @@ export default function AdminHistoriasPage() {
       .select("appointment_date, start_time, status")
       .gte("appointment_date", from)
       .lte("appointment_date", to)
-      .in("status", BLOCKING_STATUSES);
+      .order("appointment_date", { ascending: true })
+      .order("start_time", { ascending: true });
 
     if (error) {
       console.error("Error loading appointments:", error);
@@ -274,12 +289,20 @@ export default function AdminHistoriasPage() {
       return [];
     }
 
-    const freshAppointments = (data || []) as Appointment[];
+    const allAppointments = (data || []) as Appointment[];
 
-    setAppointments(freshAppointments);
+    console.log("Todos los turnos del rango para historia:", allAppointments);
+
+    const blockingAppointments = allAppointments.filter((appointment) =>
+      isBlockingStatus(appointment.status),
+    );
+
+    console.log("Turnos ocupados para historia:", blockingAppointments);
+
+    setAppointments(blockingAppointments);
     setLoading(false);
 
-    return freshAppointments;
+    return blockingAppointments;
   }, [dates]);
 
   useEffect(() => {
@@ -333,25 +356,28 @@ export default function AdminHistoriasPage() {
 
     ctx.fillStyle = "rgba(255,255,255,0.82)";
     ctx.font = "bold 34px Arial";
-    ctx.fillText("MAGNOLIA BEAUTY 🌸", 540, 105);
+    ctx.fillText("MAGNOLIA BEAUTY", 540, 105);
+
+    ctx.font = "bold 42px Arial";
+    ctx.fillText("🌸", 540, 155);
 
     ctx.strokeStyle = "rgba(250,216,240,0.45)";
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(400, 150);
-    ctx.lineTo(680, 150);
+    ctx.moveTo(400, 185);
+    ctx.lineTo(680, 185);
     ctx.stroke();
 
     ctx.fillStyle = "#FFFFFF";
     ctx.font = "bold 112px Georgia";
-    ctx.fillText("TURNOS", 540, 270);
-    ctx.fillText("DISPONIBLES", 540, 390);
+    ctx.fillText("TURNOS", 540, 300);
+    ctx.fillText("DISPONIBLES", 540, 420);
 
     ctx.fillStyle = "#FAD8F0";
     ctx.font = "bold 38px Arial";
-    ctx.fillText(`✦ ${subtitle} ✦`, 540, 455);
+    ctx.fillText(`✦ ${subtitle} ✦`, 540, 485);
 
-    const cardTop = 545;
+    const cardTop = 575;
     const cardGap = 24;
     const cardWidth =
       dates.length === 1 ? 880 : Math.floor((880 - cardGap * 2) / 3);
@@ -433,21 +459,21 @@ export default function AdminHistoriasPage() {
       });
     });
 
-    roundRect(ctx, 105, 1395, 870, 245, 58, "#E535AA");
+    roundRect(ctx, 105, 1425, 870, 245, 58, "#E535AA");
 
     ctx.textAlign = "center";
     ctx.fillStyle = "#FFFFFF";
     ctx.font = "bold 74px Georgia";
-    ctx.fillText("Reservá tu turno", 540, 1490);
+    ctx.fillText("Reservá tu turno", 540, 1520);
 
-    roundRect(ctx, 305, 1530, 470, 82, 42, "rgba(42,14,30,0.45)");
+    roundRect(ctx, 305, 1560, 470, 82, 42, "rgba(42,14,30,0.45)");
     ctx.fillStyle = "#FAD8F0";
     ctx.font = "italic 48px Georgia";
-    ctx.fillText("por la app 💅", 540, 1586);
+    ctx.fillText("por la app", 540, 1616);
 
     ctx.fillStyle = "rgba(255,255,255,0.68)";
     ctx.font = "bold 30px Arial";
-    ctx.fillText("🌐 magnolia-beauty-iota.vercel.app", 540, 1725);
+    ctx.fillText("magnolia-beauty-iota.vercel.app", 540, 1755);
 
     const blob = await blobFromCanvas(canvas);
 
@@ -549,29 +575,7 @@ export default function AdminHistoriasPage() {
       const freshAppointments = await loadAppointments();
       const freshOccupiedByDate = groupOccupiedByDate(freshAppointments);
 
-      const lines = [
-        "MAGNOLIA BEAUTY 🌸",
-        "",
-        "Turnos disponibles 💅",
-        subtitle,
-        "",
-      ];
-
-      dates.forEach((date) => {
-        lines.push(`${formatDayTitle(date)}`);
-
-        ALL_SLOTS.forEach((slot) => {
-          const occupied = (freshOccupiedByDate[date] || []).includes(slot);
-          lines.push(`${slot} ${occupied ? "❌ Ocupado" : "✅ Disponible"}`);
-        });
-
-        lines.push("");
-      });
-
-      lines.push("Reservá tu turno por la app ✨");
-      lines.push("magnolia-beauty-iota.vercel.app");
-
-      await navigator.clipboard.writeText(lines.join("\n"));
+      await navigator.clipboard.writeText(buildInstagramText(freshOccupiedByDate));
       alert("Texto copiado para Instagram ✅");
     } catch (error) {
       console.error("Error copiando texto:", error);
@@ -661,7 +665,7 @@ export default function AdminHistoriasPage() {
                 </div>
 
                 <div className="mt-2 text-xs leading-5 text-white/35">
-                  Al generar, vuelve a consultar Supabase para marcar ocupados
+                  Al generar, vuelve a consultar Supabase y marca ocupados
                   reales.
                 </div>
               </div>
