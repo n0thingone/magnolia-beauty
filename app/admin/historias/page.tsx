@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import {
   ArrowLeft,
@@ -253,36 +253,40 @@ export default function AdminHistoriasPage() {
     return lines.join("\n");
   }, [dates, occupiedByDate, subtitle]);
 
-  useEffect(() => {
-    const loadAppointments = async () => {
-      setLoading(true);
-      setGeneratedUrl(null);
-      setGeneratedBlob(null);
+  const loadAppointments = useCallback(async () => {
+    setLoading(true);
 
-      const from = dates[0];
-      const to = dates[dates.length - 1];
+    const from = dates[0];
+    const to = dates[dates.length - 1];
 
-      const { data, error } = await supabase
-        .from("appointments")
-        .select("appointment_date, start_time, status")
-        .gte("appointment_date", from)
-        .lte("appointment_date", to)
-        .in("status", BLOCKING_STATUSES);
+    const { data, error } = await supabase
+      .from("appointments")
+      .select("appointment_date, start_time, status")
+      .gte("appointment_date", from)
+      .lte("appointment_date", to)
+      .in("status", BLOCKING_STATUSES);
 
-      if (error) {
-        console.error("Error loading appointments:", error);
-        alert("No pudimos cargar los turnos para la historia.");
-        setAppointments([]);
-        setLoading(false);
-        return;
-      }
-
-      setAppointments((data || []) as Appointment[]);
+    if (error) {
+      console.error("Error loading appointments:", error);
+      alert("No pudimos cargar los turnos para la historia.");
+      setAppointments([]);
       setLoading(false);
-    };
+      return [];
+    }
 
-    loadAppointments();
+    const freshAppointments = (data || []) as Appointment[];
+
+    setAppointments(freshAppointments);
+    setLoading(false);
+
+    return freshAppointments;
   }, [dates]);
+
+  useEffect(() => {
+    setGeneratedUrl(null);
+    setGeneratedBlob(null);
+    loadAppointments();
+  }, [loadAppointments]);
 
   useEffect(() => {
     return () => {
@@ -290,7 +294,9 @@ export default function AdminHistoriasPage() {
     };
   }, [generatedUrl]);
 
-  const createStoryFile = async () => {
+  const createStoryFile = async (
+    occupiedMap: Record<string, string[]> = occupiedByDate,
+  ) => {
     const canvas = document.createElement("canvas");
     canvas.width = 1080;
     canvas.height = 1920;
@@ -319,12 +325,12 @@ export default function AdminHistoriasPage() {
     ctx.fillStyle = "rgba(229,53,170,0.18)";
     ctx.fill();
 
+    ctx.textAlign = "center";
     ctx.fillStyle = "rgba(255,255,255,0.2)";
     ctx.font = "bold 62px Arial";
     ctx.fillText("✦", 950, 330);
     ctx.fillText("✦", 110, 535);
 
-    ctx.textAlign = "center";
     ctx.fillStyle = "rgba(255,255,255,0.82)";
     ctx.font = "bold 34px Arial";
     ctx.fillText("MAGNOLIA BEAUTY 🌸", 540, 105);
@@ -358,7 +364,7 @@ export default function AdminHistoriasPage() {
           : cardStartX + dateIndex * (cardWidth + cardGap);
 
       const y = cardTop;
-      const occupied = occupiedByDate[date] || [];
+      const occupied = occupiedMap[date] || [];
 
       roundRect(ctx, x, y, cardWidth, 770, 42, "rgba(255,255,255,0.12)");
       strokeRoundRect(
@@ -460,7 +466,10 @@ export default function AdminHistoriasPage() {
     try {
       if (generatedUrl) URL.revokeObjectURL(generatedUrl);
 
-      const result = await createStoryFile();
+      const freshAppointments = await loadAppointments();
+      const freshOccupiedByDate = groupOccupiedByDate(freshAppointments);
+
+      const result = await createStoryFile(freshOccupiedByDate);
 
       setGeneratedBlob(result.blob);
       setGeneratedUrl(result.url);
@@ -477,7 +486,10 @@ export default function AdminHistoriasPage() {
       let blob = generatedBlob;
 
       if (!blob) {
-        const result = await createStoryFile();
+        const freshAppointments = await loadAppointments();
+        const freshOccupiedByDate = groupOccupiedByDate(freshAppointments);
+        const result = await createStoryFile(freshOccupiedByDate);
+
         blob = result.blob;
         setGeneratedBlob(result.blob);
         setGeneratedUrl(result.url);
@@ -499,7 +511,10 @@ export default function AdminHistoriasPage() {
       let blob = generatedBlob;
 
       if (!blob) {
-        const result = await createStoryFile();
+        const freshAppointments = await loadAppointments();
+        const freshOccupiedByDate = groupOccupiedByDate(freshAppointments);
+        const result = await createStoryFile(freshOccupiedByDate);
+
         blob = result.blob;
         setGeneratedBlob(result.blob);
         setGeneratedUrl(result.url);
@@ -531,7 +546,32 @@ export default function AdminHistoriasPage() {
 
   const copyText = async () => {
     try {
-      await navigator.clipboard.writeText(instagramText);
+      const freshAppointments = await loadAppointments();
+      const freshOccupiedByDate = groupOccupiedByDate(freshAppointments);
+
+      const lines = [
+        "MAGNOLIA BEAUTY 🌸",
+        "",
+        "Turnos disponibles 💅",
+        subtitle,
+        "",
+      ];
+
+      dates.forEach((date) => {
+        lines.push(`${formatDayTitle(date)}`);
+
+        ALL_SLOTS.forEach((slot) => {
+          const occupied = (freshOccupiedByDate[date] || []).includes(slot);
+          lines.push(`${slot} ${occupied ? "❌ Ocupado" : "✅ Disponible"}`);
+        });
+
+        lines.push("");
+      });
+
+      lines.push("Reservá tu turno por la app ✨");
+      lines.push("magnolia-beauty-iota.vercel.app");
+
+      await navigator.clipboard.writeText(lines.join("\n"));
       alert("Texto copiado para Instagram ✅");
     } catch (error) {
       console.error("Error copiando texto:", error);
@@ -615,14 +655,14 @@ export default function AdminHistoriasPage() {
                 <div className="text-sm font-bold text-white">{subtitle}</div>
 
                 <div className="mt-1 text-xs leading-5 text-white/45">
-                  {loading
-                    ? "Cargando turnos..."
+                  {loading || generating
+                    ? "Actualizando turnos..."
                     : `${totalAvailable} disponibles · ${totalOccupied} ocupados`}
                 </div>
 
                 <div className="mt-2 text-xs leading-5 text-white/35">
-                  Ocupa horarios con seña pagada, confirmados, atendidos,
-                  pendientes de pago y reagendados.
+                  Al generar, vuelve a consultar Supabase para marcar ocupados
+                  reales.
                 </div>
               </div>
             </div>
