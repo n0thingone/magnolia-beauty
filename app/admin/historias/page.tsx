@@ -1,8 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
-import html2canvas from "html2canvas";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import {
   ArrowLeft,
@@ -49,6 +48,10 @@ type Appointment = {
   appointment_date: string;
   start_time: string;
   status: string;
+};
+
+type ShareDataWithFiles = ShareData & {
+  files?: File[];
 };
 
 function toDateInputValue(date: Date) {
@@ -143,9 +146,57 @@ function blobFromCanvas(canvas: HTMLCanvasElement) {
   });
 }
 
-export default function AdminHistoriasPage() {
-  const storyRef = useRef<HTMLDivElement | null>(null);
+function roundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+  fillStyle: string,
+) {
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + width - radius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+  ctx.lineTo(x + width, y + height - radius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  ctx.lineTo(x + radius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+  ctx.fillStyle = fillStyle;
+  ctx.fill();
+}
 
+function strokeRoundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+  strokeStyle: string,
+  lineWidth: number,
+) {
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + width - radius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+  ctx.lineTo(x + width, y + height - radius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  ctx.lineTo(x + radius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+  ctx.strokeStyle = strokeStyle;
+  ctx.lineWidth = lineWidth;
+  ctx.stroke();
+}
+
+export default function AdminHistoriasPage() {
   const [mode, setMode] = useState<RangeMode>("week");
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -240,25 +291,162 @@ export default function AdminHistoriasPage() {
   }, [generatedUrl]);
 
   const createStoryFile = async () => {
-    if (!storyRef.current) {
-      throw new Error("No existe storyRef");
+    const canvas = document.createElement("canvas");
+    canvas.width = 1080;
+    canvas.height = 1920;
+
+    const ctx = canvas.getContext("2d");
+
+    if (!ctx) {
+      throw new Error("No se pudo crear el canvas");
     }
 
-    await new Promise<void>((resolve) => {
-      requestAnimationFrame(() => resolve());
+    const gradient = ctx.createLinearGradient(0, 0, 1080, 1920);
+    gradient.addColorStop(0, "#2A0E1E");
+    gradient.addColorStop(0.55, "#68174B");
+    gradient.addColorStop(1, "#210817");
+
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 1080, 1920);
+
+    ctx.beginPath();
+    ctx.arc(920, 130, 260, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(240,117,181,0.22)";
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(110, 1780, 280, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(229,53,170,0.18)";
+    ctx.fill();
+
+    ctx.fillStyle = "rgba(255,255,255,0.2)";
+    ctx.font = "bold 62px Arial";
+    ctx.fillText("✦", 950, 330);
+    ctx.fillText("✦", 110, 535);
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = "rgba(255,255,255,0.82)";
+    ctx.font = "bold 34px Arial";
+    ctx.fillText("MAGNOLIA BEAUTY 🌸", 540, 105);
+
+    ctx.strokeStyle = "rgba(250,216,240,0.45)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(400, 150);
+    ctx.lineTo(680, 150);
+    ctx.stroke();
+
+    ctx.fillStyle = "#FFFFFF";
+    ctx.font = "bold 112px Georgia";
+    ctx.fillText("TURNOS", 540, 270);
+    ctx.fillText("DISPONIBLES", 540, 390);
+
+    ctx.fillStyle = "#FAD8F0";
+    ctx.font = "bold 38px Arial";
+    ctx.fillText(`✦ ${subtitle} ✦`, 540, 455);
+
+    const cardTop = 545;
+    const cardGap = 24;
+    const cardWidth =
+      dates.length === 1 ? 880 : Math.floor((880 - cardGap * 2) / 3);
+    const cardStartX = 100;
+
+    dates.forEach((date, dateIndex) => {
+      const x =
+        dates.length === 1
+          ? cardStartX
+          : cardStartX + dateIndex * (cardWidth + cardGap);
+
+      const y = cardTop;
+      const occupied = occupiedByDate[date] || [];
+
+      roundRect(ctx, x, y, cardWidth, 770, 42, "rgba(255,255,255,0.12)");
+      strokeRoundRect(
+        ctx,
+        x,
+        y,
+        cardWidth,
+        770,
+        42,
+        "rgba(250,216,240,0.35)",
+        2,
+      );
+
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#FFFFFF";
+      ctx.font = dates.length === 1 ? "bold 44px Arial" : "bold 34px Arial";
+      ctx.fillText(formatDayTitle(date), x + cardWidth / 2, y + 78);
+
+      ALL_SLOTS.forEach((slot, slotIndex) => {
+        const isOccupied = occupied.includes(slot);
+        const slotX = x + 24;
+        const slotY = y + 125 + slotIndex * 118;
+        const slotW = cardWidth - 48;
+        const slotH = 92;
+
+        roundRect(
+          ctx,
+          slotX,
+          slotY,
+          slotW,
+          slotH,
+          26,
+          isOccupied ? "rgba(255,255,255,0.52)" : "rgba(255,255,255,0.96)",
+        );
+
+        ctx.textAlign = "left";
+        ctx.fillStyle = isOccupied ? "#555555" : "#C3167E";
+        ctx.font = dates.length === 1 ? "bold 42px Arial" : "bold 34px Arial";
+        ctx.fillText(slot, slotX + 24, slotY + 42);
+
+        if (isOccupied) {
+          ctx.strokeStyle = "#555555";
+          ctx.lineWidth = 5;
+          ctx.beginPath();
+          ctx.moveTo(slotX + 20, slotY + 34);
+          ctx.lineTo(slotX + 112, slotY + 34);
+          ctx.stroke();
+        }
+
+        ctx.font = dates.length === 1 ? "bold 23px Arial" : "bold 18px Arial";
+        ctx.fillText(
+          isOccupied ? "Ocupado" : "Disponible",
+          slotX + 24,
+          slotY + 72,
+        );
+
+        ctx.textAlign = "center";
+        ctx.beginPath();
+        ctx.arc(slotX + slotW - 40, slotY + 46, 28, 0, Math.PI * 2);
+        ctx.fillStyle = isOccupied ? "#9CA3AF" : "#E535AA";
+        ctx.fill();
+
+        ctx.fillStyle = "#FFFFFF";
+        ctx.font = "bold 36px Arial";
+        ctx.fillText(isOccupied ? "×" : "✓", slotX + slotW - 40, slotY + 58);
+      });
     });
 
-    const canvas = await html2canvas(storyRef.current, {
-      backgroundColor: "#2A0E1E",
-      scale: 1,
-      useCORS: true,
-      logging: false,
-    });
+    roundRect(ctx, 105, 1395, 870, 245, 58, "#E535AA");
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#FFFFFF";
+    ctx.font = "bold 74px Georgia";
+    ctx.fillText("Reservá tu turno", 540, 1490);
+
+    roundRect(ctx, 305, 1530, 470, 82, 42, "rgba(42,14,30,0.45)");
+    ctx.fillStyle = "#FAD8F0";
+    ctx.font = "italic 48px Georgia";
+    ctx.fillText("por la app 💅", 540, 1586);
+
+    ctx.fillStyle = "rgba(255,255,255,0.68)";
+    ctx.font = "bold 30px Arial";
+    ctx.fillText("🌐 magnolia-beauty-iota.vercel.app", 540, 1725);
 
     const blob = await blobFromCanvas(canvas);
 
     if (!blob) {
-      throw new Error("No se pudo crear el blob de la imagen");
+      throw new Error("No se pudo crear la imagen");
     }
 
     const url = URL.createObjectURL(blob);
@@ -322,18 +510,17 @@ export default function AdminHistoriasPage() {
       });
 
       const nav = navigator as Navigator & {
-        canShare?: (data: ShareData) => boolean;
+        canShare?: (data: ShareDataWithFiles) => boolean;
       };
 
-      if (
-        navigator.share &&
-        (!nav.canShare || nav.canShare({ files: [file] }))
-      ) {
-        await navigator.share({
-          title: "Turnos disponibles Magnolia Beauty",
-          text: "Turnos disponibles Magnolia Beauty 🌸",
-          files: [file],
-        });
+      const shareData: ShareDataWithFiles = {
+        title: "Turnos disponibles Magnolia Beauty",
+        text: "Turnos disponibles Magnolia Beauty 🌸",
+        files: [file],
+      };
+
+      if (navigator.share && (!nav.canShare || nav.canShare(shareData))) {
+        await navigator.share(shareData);
       } else {
         await downloadStory();
       }
@@ -343,8 +530,13 @@ export default function AdminHistoriasPage() {
   };
 
   const copyText = async () => {
-    await navigator.clipboard.writeText(instagramText);
-    alert("Texto copiado para Instagram ✅");
+    try {
+      await navigator.clipboard.writeText(instagramText);
+      alert("Texto copiado para Instagram ✅");
+    } catch (error) {
+      console.error("Error copiando texto:", error);
+      alert("No pudimos copiar el texto.");
+    }
   };
 
   return (
@@ -490,129 +682,6 @@ export default function AdminHistoriasPage() {
             </div>
           )}
         </section>
-      </div>
-
-      <div
-        aria-hidden="true"
-        className="absolute left-[-9999px] top-0 overflow-hidden"
-      >
-        <div
-          ref={storyRef}
-          style={{
-            width: 1080,
-            height: 1920,
-          }}
-          className="relative overflow-hidden bg-[radial-gradient(circle_at_85%_8%,#F075B5_0%,transparent_27%),linear-gradient(160deg,#2A0E1E_0%,#68174B_56%,#210817_100%)] px-[72px] py-[92px] text-white"
-        >
-          <div className="absolute left-[-180px] top-[170px] h-[360px] w-[360px] rounded-full bg-[#FAD8F0]/20 blur-[80px]" />
-          <div className="absolute bottom-[-170px] right-[-160px] h-[460px] w-[460px] rounded-full bg-[#E535AA]/25 blur-[90px]" />
-          <div className="absolute right-[75px] top-[300px] text-[54px] text-white/70">
-            ✦
-          </div>
-          <div className="absolute left-[90px] top-[560px] text-[32px] text-[#FAD8F0]/70">
-            ✦
-          </div>
-
-          <div className="relative z-[1] text-center">
-            <div className="text-[34px] font-bold uppercase tracking-[12px] text-white/80">
-              Magnolia Beauty 🌸
-            </div>
-
-            <div className="mx-auto mt-[34px] h-px w-[270px] bg-[#FAD8F0]/45" />
-
-            <h1 className="mt-[60px] font-serif text-[128px] font-bold leading-[0.9] tracking-wide text-white drop-shadow">
-              TURNOS
-              <br />
-              DISPONIBLES
-            </h1>
-
-            <div className="mt-[36px] text-[38px] font-semibold text-[#FAD8F0]">
-              ✦ {subtitle} ✦
-            </div>
-          </div>
-
-          <div
-            className={[
-              "relative z-[1] mt-[78px] grid gap-[26px]",
-              dates.length === 1 ? "grid-cols-1" : "grid-cols-3",
-            ].join(" ")}
-          >
-            {dates.map((date) => {
-              const occupied = occupiedByDate[date] || [];
-
-              return (
-                <div
-                  key={date}
-                  className="rounded-[46px] border border-[#FAD8F0]/35 bg-white/10 p-[26px] shadow-[0_20px_70px_rgba(0,0,0,0.22)] backdrop-blur-md"
-                >
-                  <div className="mb-[28px] text-center">
-                    <div className="text-[38px]">🗓️</div>
-                    <div className="mt-[10px] text-[38px] font-bold uppercase tracking-[6px]">
-                      {formatDayTitle(date)}
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-[18px]">
-                    {ALL_SLOTS.map((slot) => {
-                      const isOccupied = occupied.includes(slot);
-
-                      return (
-                        <div
-                          key={slot}
-                          className={[
-                            "rounded-[30px] px-[28px] py-[24px]",
-                            isOccupied
-                              ? "bg-white/55 text-zinc-600"
-                              : "bg-white/95 text-[#C3167E]",
-                          ].join(" ")}
-                        >
-                          <div className="flex items-center justify-between gap-[18px]">
-                            <div>
-                              <div
-                                className={[
-                                  "text-[42px] font-black leading-none",
-                                  isOccupied ? "line-through" : "",
-                                ].join(" ")}
-                              >
-                                {slot}
-                              </div>
-                              <div className="mt-[10px] text-[24px] font-bold">
-                                {isOccupied ? "Ocupado" : "Disponible"}
-                              </div>
-                            </div>
-
-                            <div
-                              className={[
-                                "flex h-[62px] w-[62px] shrink-0 items-center justify-center rounded-full text-[42px] font-black text-white",
-                                isOccupied ? "bg-zinc-400" : "bg-[#E535AA]",
-                              ].join(" ")}
-                            >
-                              {isOccupied ? "×" : "✓"}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="relative z-[1] mt-[80px] rounded-[58px] border border-[#FAD8F0]/35 bg-[linear-gradient(135deg,#E535AA,#A91473)] p-[48px] text-center shadow-[0_18px_70px_rgba(229,53,170,0.34)]">
-            <div className="font-serif text-[76px] font-bold leading-none">
-              Reservá tu turno
-            </div>
-
-            <div className="mx-auto mt-[28px] inline-flex rounded-full bg-[#2A0E1E]/45 px-[72px] py-[22px] font-serif text-[54px] italic text-[#FAD8F0]">
-              por la app 💅
-            </div>
-          </div>
-
-          <div className="relative z-[1] mt-[58px] text-center text-[30px] font-medium text-white/65">
-            🌐 magnolia-beauty-iota.vercel.app
-          </div>
-        </div>
       </div>
     </main>
   );
