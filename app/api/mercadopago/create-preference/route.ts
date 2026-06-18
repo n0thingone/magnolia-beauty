@@ -10,6 +10,16 @@ function getErrorDetails(error: unknown) {
   }
 }
 
+function getBaseUrl() {
+  return (
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    process.env.NEXT_PUBLIC_APP_URL ||
+    process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : "https://magnolia-beauty-iota.vercel.app"
+  );
+}
+
 export async function POST(request: Request) {
   try {
     const accessToken = process.env.MERCADO_PAGO_ACCESS_TOKEN;
@@ -90,6 +100,8 @@ export async function POST(request: Request) {
 
     const preference = new Preference(mpClient);
 
+    const baseUrl = getBaseUrl();
+
     const preferenceBody = {
       items: [
         {
@@ -112,6 +124,14 @@ export async function POST(request: Request) {
       metadata: {
         appointment_id: appointment.id,
       },
+
+      back_urls: {
+        success: `${baseUrl}/reservar/exito?appointment_id=${appointment.id}`,
+        failure: `${baseUrl}/reservar/error?appointment_id=${appointment.id}`,
+        pending: `${baseUrl}/reservar/pendiente?appointment_id=${appointment.id}`,
+      },
+
+      auto_return: "approved",
 
       notification_url: webhookUrl || undefined,
     };

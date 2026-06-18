@@ -16,11 +16,7 @@ import {
 
 const ALL_SLOTS = ["10:30", "12:00", "14:00", "15:30", "17:00"];
 
-const OCCUPIED: Record<string, string[]> = {
-  "2026-06-18": ["10:30", "14:00"],
-  "2026-06-19": ["12:00", "15:30"],
-  "2026-06-20": ["10:30", "17:00"],
-};
+const BLOCKING_STATUSES = ["pending_payment", "paid", "confirmed"];
 
 const MONTHS_ES = [
   "Enero",
@@ -312,13 +308,16 @@ export default function ReservarPage() {
   const [loadingServices, setLoadingServices] = useState(true);
   const [servicesError, setServicesError] = useState<string | null>(null);
   const [creatingAppointment, setCreatingAppointment] = useState(false);
-  const [createdAppointmentId, setCreatedAppointmentId] = useState<string | null>(
-    null,
-  );
+  const [createdAppointmentId, setCreatedAppointmentId] = useState<
+    string | null
+  >(null);
 
   const [selectedService, setSelectedService] = useState<Service | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [selectedTime, setSelectedTime] = useState<string | null>(null);
+
+  const [occupiedSlots, setOccupiedSlots] = useState<string[]>([]);
+  const [loadingSlots, setLoadingSlots] = useState(false);
 
   const [client, setClient] = useState<ClientData>({
     nombre: "",
@@ -353,13 +352,44 @@ export default function ReservarPage() {
     loadServices();
   }, []);
 
+  useEffect(() => {
+    const loadOccupiedSlots = async () => {
+      if (!selectedDate) {
+        setOccupiedSlots([]);
+        return;
+      }
+
+      setLoadingSlots(true);
+
+      const { data, error } = await supabase
+        .from("appointments")
+        .select("start_time, status")
+        .eq("appointment_date", selectedDate)
+        .in("status", BLOCKING_STATUSES);
+
+      if (error) {
+        console.error("Error loading occupied slots:", error);
+        setOccupiedSlots([]);
+        setLoadingSlots(false);
+        return;
+      }
+
+      const slots = (data || []).map((item) =>
+        String(item.start_time).slice(0, 5),
+      );
+
+      setOccupiedSlots(slots);
+      setLoadingSlots(false);
+    };
+
+    loadOccupiedSlots();
+  }, [selectedDate]);
+
   const availableSlots = useMemo(() => {
     if (!selectedDate) return [];
 
-    return ALL_SLOTS.filter(
-      (slot) => !(OCCUPIED[selectedDate] || []).includes(slot),
-    );
-  }, [selectedDate]);
+    return ALL_SLOTS.filter((slot) => !occupiedSlots.includes(slot));
+  }, [selectedDate, occupiedSlots]);
 
   const clientIsValid =
     client.nombre.trim().length > 1 &&
@@ -415,6 +445,33 @@ export default function ReservarPage() {
       return;
     }
 
+    const { data: existingAppointment, error: existingAppointmentError } =
+      await supabase
+        .from("appointments")
+        .select("id, status")
+        .eq("appointment_date", selectedDate)
+        .eq("start_time", selectedTime)
+        .in("status", BLOCKING_STATUSES)
+        .maybeSingle();
+
+    if (existingAppointmentError) {
+      console.error("Error checking appointment:", existingAppointmentError);
+      alert("No pudimos verificar si el horario sigue disponible.");
+      setCreatingAppointment(false);
+      return;
+    }
+
+    if (existingAppointment) {
+      alert("Ese horario acaba de ser reservado. Elegí otro horario.");
+      setOccupiedSlots((current) =>
+        current.includes(selectedTime) ? current : [...current, selectedTime],
+      );
+      setSelectedTime(null);
+      setStep(2);
+      setCreatingAppointment(false);
+      return;
+    }
+
     const totalPrice = selectedService.price || 0;
     const depositAmount = selectedService.deposit_amount || 0;
     const remainingAmount = Math.max(totalPrice - depositAmount, 0);
@@ -457,27 +514,32 @@ export default function ReservarPage() {
     }
 
     setCreatedAppointmentId(appointment.id);
+    setOccupiedSlots((current) =>
+      selectedTime && !current.includes(selectedTime)
+        ? [...current, selectedTime]
+        : current,
+    );
 
-const preferenceResponse = await fetch("/api/mercadopago/create-preference", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-    appointmentId: appointment.id,
-  }),
-});
+    const preferenceResponse = await fetch("/api/mercadopago/create-preference", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        appointmentId: appointment.id,
+      }),
+    });
 
-const preferenceData = await preferenceResponse.json();
+    const preferenceData = await preferenceResponse.json();
 
-if (!preferenceResponse.ok || !preferenceData.initPoint) {
-  console.error("Preference error:", preferenceData);
-  alert("El turno se creó, pero no pudimos abrir Mercado Pago.");
-  setCreatingAppointment(false);
-  return;
-}
+    if (!preferenceResponse.ok || !preferenceData.initPoint) {
+      console.error("Preference error:", preferenceData);
+      alert("El turno se creó, pero no pudimos abrir Mercado Pago.");
+      setCreatingAppointment(false);
+      return;
+    }
 
-window.location.href = preferenceData.initPoint;
+    window.location.href = preferenceData.initPoint;
   };
 
   return (
@@ -639,26 +701,36 @@ window.location.href = preferenceData.initPoint;
                   Horarios disponibles
                 </div>
 
-                <div className="grid grid-cols-3 gap-2">
-                  {availableSlots.map((slot) => {
-                    const active = selectedTime === slot;
+                {loadingSlots ? (
+                  <div className="rounded-[18px] border border-white/15 bg-white/10 p-4 text-center text-sm text-white/50 backdrop-blur-md">
+                    Cargando horarios...
+                  </div>
+                ) : availableSlots.length > 0 ? (
+                  <div className="grid grid-cols-3 gap-2">
+                    {availableSlots.map((slot) => {
+                      const active = selectedTime === slot;
 
-                    return (
-                      <button
-                        key={slot}
-                        onClick={() => setSelectedTime(slot)}
-                        className={[
-                          "rounded-[14px] border-2 py-3 text-[14px] font-bold transition",
-                          active
-                            ? "border-[#E535AA] bg-[#E535AA] text-white shadow-[0_4px_18px_rgba(229,53,170,0.45)]"
-                            : "border-white/15 bg-white/10 text-white/80 hover:bg-white/15",
-                        ].join(" ")}
-                      >
-                        {slot}
-                      </button>
-                    );
-                  })}
-                </div>
+                      return (
+                        <button
+                          key={slot}
+                          onClick={() => setSelectedTime(slot)}
+                          className={[
+                            "rounded-[14px] border-2 py-3 text-[14px] font-bold transition",
+                            active
+                              ? "border-[#E535AA] bg-[#E535AA] text-white shadow-[0_4px_18px_rgba(229,53,170,0.45)]"
+                              : "border-white/15 bg-white/10 text-white/80 hover:bg-white/15",
+                          ].join(" ")}
+                        >
+                          {slot}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-[18px] border border-yellow-300/25 bg-yellow-400/10 p-4 text-center text-sm text-yellow-100 backdrop-blur-md">
+                    No quedan horarios disponibles para ese día.
+                  </div>
+                )}
               </div>
             )}
 
@@ -864,14 +936,14 @@ window.location.href = preferenceData.initPoint;
                   ].join(" ")}
                 >
                   {creatingAppointment
-                    ? "Creando turno..."
+                    ? "Abriendo Mercado Pago..."
                     : "Continuar a Mercado Pago"}
                   <ChevronRight size={17} />
                 </button>
 
                 <p className="text-center text-xs leading-5 text-white/35">
-                  Ahora crea el turno en Supabase. Después conectamos Mercado
-                  Pago real para cobrar la seña.
+                  Vas a pagar la seña por Mercado Pago. El saldo restante se
+                  abona el día del turno.
                 </p>
               </div>
             </div>
