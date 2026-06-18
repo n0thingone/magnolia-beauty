@@ -17,6 +17,7 @@ import {
   CheckCircle,
   XCircle,
   BadgeCheck,
+  Sparkles,
 } from "lucide-react";
 
 type Customer = {
@@ -244,7 +245,8 @@ export default function AdminPage() {
     () =>
       appointments.filter(
         (appointment) =>
-          appointment.status === "confirmed" || appointment.status === "completed",
+          appointment.status === "confirmed" ||
+          appointment.status === "completed",
       ),
     [appointments],
   );
@@ -434,6 +436,14 @@ Escribinos por acá y coordinamos un nuevo horario 💕`;
             >
               <Settings size={16} />
               Servicios
+            </Link>
+
+            <Link
+              href="/admin/historias"
+              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#E535AA]/35 bg-[#E535AA]/15 px-4 py-3 text-sm font-bold text-[#FAD8F0] backdrop-blur-md transition hover:bg-[#E535AA]/25"
+            >
+              <Sparkles size={16} />
+              Historias
             </Link>
           </div>
         </header>
@@ -678,6 +688,17 @@ Cualquier cosa escribinos por acá 💕`;
                   <span className="inline-flex items-center gap-3 font-bold">
                     <Scissors size={18} className="text-[#FAD8F0]" />
                     Servicios
+                  </span>
+                  <span className="text-white/35">→</span>
+                </Link>
+
+                <Link
+                  href="/admin/historias"
+                  className="flex items-center justify-between rounded-2xl border border-[#E535AA]/30 bg-[#E535AA]/15 p-4 text-[#FAD8F0] transition hover:bg-[#E535AA]/25"
+                >
+                  <span className="inline-flex items-center gap-3 font-bold">
+                    <Sparkles size={18} className="text-[#FAD8F0]" />
+                    Historias
                   </span>
                   <span className="text-white/35">→</span>
                 </Link>
