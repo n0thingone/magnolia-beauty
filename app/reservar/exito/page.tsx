@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import NotifyMagnoliaEmail from "./NotifyMagnoliaEmail";
 
 type ExitoPageProps = {
   searchParams: Promise<{
@@ -106,6 +107,8 @@ Gracias!`,
 
   return (
     <main className="min-h-screen bg-[linear-gradient(160deg,#2A0E1E_0%,#4A1035_60%,#2A0E1E_100%)] px-5 py-10 text-white">
+      <NotifyMagnoliaEmail appointmentId={appointmentId} />
+
       <div className="mx-auto max-w-[430px]">
         <div className="rounded-[24px] border border-emerald-300/30 bg-emerald-400/15 p-6 text-center backdrop-blur-md">
           <div className="text-5xl">✅</div>
@@ -115,8 +118,9 @@ Gracias!`,
           </h1>
 
           <p className="mt-3 text-sm leading-6 text-white/60">
-            Recibimos tu solicitud. Para confirmar más rápido, mandale el
-            recordatorio a Magnolia por WhatsApp.
+            Recibimos tu solicitud. También vamos a avisarle automáticamente a
+            Magnolia por mail. Si querés confirmar más rápido, podés avisar por
+            WhatsApp.
           </p>
         </div>
 
@@ -219,8 +223,8 @@ Gracias!`,
           </div>
         ) : (
           <div className="mt-4 rounded-[24px] border border-white/15 bg-white/10 p-5 text-center text-sm text-white/60 backdrop-blur-md">
-            No pudimos cargar el resumen del turno, pero podés enviar el
-            recordatorio igual.
+            No pudimos cargar el resumen del turno, pero podés enviar el aviso
+            igual.
           </div>
         )}
 
@@ -230,7 +234,7 @@ Gracias!`,
           rel="noreferrer"
           className="mt-5 flex w-full items-center justify-center rounded-2xl bg-[#25D366] px-6 py-4 text-center text-sm font-bold text-white shadow-[0_6px_24px_rgba(37,211,102,0.28)]"
         >
-          Enviar recordatorio a Magnolia
+          Avisar por WhatsApp a Magnolia
         </a>
 
         <Link
