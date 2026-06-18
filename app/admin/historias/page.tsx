@@ -45,6 +45,7 @@ const MONTHS_ES = [
 type RangeMode = "today" | "tomorrow" | "week";
 
 type Appointment = {
+  id?: string;
   appointment_date: string;
   start_time: string;
   status: string;
@@ -54,7 +55,8 @@ type ShareDataWithFiles = ShareData & {
   files?: File[];
 };
 
-const normalizeStatus = (status: string) => String(status || "").trim().toLowerCase();
+const normalizeStatus = (status: string) =>
+  String(status || "").trim().toLowerCase();
 
 const normalizeTime = (time: string) => String(time || "").slice(0, 5);
 
@@ -222,6 +224,11 @@ export default function AdminHistoriasPage() {
 
   const subtitle = useMemo(() => getStorySubtitle(mode, dates), [mode, dates]);
 
+  const blockingAppointments = useMemo(
+    () => appointments.filter((appointment) => isBlockingStatus(appointment.status)),
+    [appointments],
+  );
+
   const totalAvailable = useMemo(() => {
     return dates.reduce((acc, date) => {
       const occupied = occupiedByDate[date] || [];
@@ -236,35 +243,38 @@ export default function AdminHistoriasPage() {
     }, 0);
   }, [dates, occupiedByDate]);
 
-  const buildInstagramText = (occupiedMap: Record<string, string[]>) => {
-    const lines = [
-      "MAGNOLIA BEAUTY 🌸",
-      "",
-      "Turnos disponibles 💅",
-      subtitle,
-      "",
-    ];
+  const buildInstagramText = useCallback(
+    (occupiedMap: Record<string, string[]>) => {
+      const lines = [
+        "MAGNOLIA BEAUTY 🌸",
+        "",
+        "Turnos disponibles 💅",
+        subtitle,
+        "",
+      ];
 
-    dates.forEach((date) => {
-      lines.push(`${formatDayTitle(date)}`);
+      dates.forEach((date) => {
+        lines.push(`${formatDayTitle(date)}`);
 
-      ALL_SLOTS.forEach((slot) => {
-        const occupied = (occupiedMap[date] || []).includes(slot);
-        lines.push(`${slot} ${occupied ? "❌ Ocupado" : "✅ Disponible"}`);
+        ALL_SLOTS.forEach((slot) => {
+          const occupied = (occupiedMap[date] || []).includes(slot);
+          lines.push(`${slot} ${occupied ? "❌ Ocupado" : "✅ Disponible"}`);
+        });
+
+        lines.push("");
       });
 
-      lines.push("");
-    });
+      lines.push("Reservá tu turno por la app ✨");
+      lines.push("magnolia-beauty-iota.vercel.app");
 
-    lines.push("Reservá tu turno por la app ✨");
-    lines.push("magnolia-beauty-iota.vercel.app");
-
-    return lines.join("\n");
-  };
+      return lines.join("\n");
+    },
+    [dates, subtitle],
+  );
 
   const instagramText = useMemo(
     () => buildInstagramText(occupiedByDate),
-    [occupiedByDate, subtitle, dates],
+    [buildInstagramText, occupiedByDate],
   );
 
   const loadAppointments = useCallback(async () => {
@@ -275,7 +285,7 @@ export default function AdminHistoriasPage() {
 
     const { data, error } = await supabase
       .from("appointments")
-      .select("appointment_date, start_time, status")
+      .select("id, appointment_date, start_time, status")
       .gte("appointment_date", from)
       .lte("appointment_date", to)
       .order("appointment_date", { ascending: true })
@@ -291,18 +301,19 @@ export default function AdminHistoriasPage() {
 
     const allAppointments = (data || []) as Appointment[];
 
-    console.log("Todos los turnos del rango para historia:", allAppointments);
-
-    const blockingAppointments = allAppointments.filter((appointment) =>
-      isBlockingStatus(appointment.status),
+    console.log("DEBUG HISTORIAS - rango:", from, to);
+    console.log("DEBUG HISTORIAS - todos los turnos:", allAppointments);
+    console.log(
+      "DEBUG HISTORIAS - ocupados:",
+      allAppointments.filter((appointment) =>
+        isBlockingStatus(appointment.status),
+      ),
     );
 
-    console.log("Turnos ocupados para historia:", blockingAppointments);
-
-    setAppointments(blockingAppointments);
+    setAppointments(allAppointments);
     setLoading(false);
 
-    return blockingAppointments;
+    return allAppointments;
   }, [dates]);
 
   useEffect(() => {
@@ -495,6 +506,8 @@ export default function AdminHistoriasPage() {
       const freshAppointments = await loadAppointments();
       const freshOccupiedByDate = groupOccupiedByDate(freshAppointments);
 
+      console.log("DEBUG HISTORIAS - mapa usado para imagen:", freshOccupiedByDate);
+
       const result = await createStoryFile(freshOccupiedByDate);
 
       setGeneratedBlob(result.blob);
@@ -670,6 +683,39 @@ export default function AdminHistoriasPage() {
                 </div>
               </div>
             </div>
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-yellow-300/25 bg-yellow-400/10 p-4 text-xs leading-5 text-yellow-100">
+            <div className="font-bold">DEBUG HISTORIAS</div>
+            <div>Modo: {mode}</div>
+            <div>Rango: {dates.join(" → ")}</div>
+            <div>Turnos cargados total: {appointments.length}</div>
+            <div>Turnos que bloquean: {blockingAppointments.length}</div>
+            <div>Ocupados detectados: {JSON.stringify(occupiedByDate)}</div>
+
+            <div className="mt-2 font-bold">Detalle:</div>
+
+            {appointments.length === 0 ? (
+              <div>No está trayendo ningún turno.</div>
+            ) : (
+              appointments.map((appointment, index) => {
+                const blocks = isBlockingStatus(appointment.status);
+
+                return (
+                  <div
+                    key={
+                      appointment.id ||
+                      `${appointment.appointment_date}-${appointment.start_time}-${index}`
+                    }
+                    className={blocks ? "text-emerald-100" : "text-red-100"}
+                  >
+                    {appointment.appointment_date} ·{" "}
+                    {normalizeTime(appointment.start_time)} ·{" "}
+                    {appointment.status} · {blocks ? "BLOQUEA" : "NO BLOQUEA"}
+                  </div>
+                );
+              })
+            )}
           </div>
 
           <button
