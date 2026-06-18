@@ -240,21 +240,26 @@ export default function AdminHistoriasPage() {
   }, [generatedUrl]);
 
   const createStoryFile = async () => {
-    if (!storyRef.current) return null;
+    if (!storyRef.current) {
+      throw new Error("No existe storyRef");
+    }
+
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => resolve());
+    });
 
     const canvas = await html2canvas(storyRef.current, {
-      backgroundColor: null,
+      backgroundColor: "#2A0E1E",
       scale: 1,
       useCORS: true,
-      width: 1080,
-      height: 1920,
-      windowWidth: 1080,
-      windowHeight: 1920,
+      logging: false,
     });
 
     const blob = await blobFromCanvas(canvas);
 
-    if (!blob) return null;
+    if (!blob) {
+      throw new Error("No se pudo crear el blob de la imagen");
+    }
 
     const url = URL.createObjectURL(blob);
 
@@ -264,70 +269,76 @@ export default function AdminHistoriasPage() {
   const generateStory = async () => {
     setGenerating(true);
 
-    if (generatedUrl) URL.revokeObjectURL(generatedUrl);
+    try {
+      if (generatedUrl) URL.revokeObjectURL(generatedUrl);
 
-    const result = await createStoryFile();
+      const result = await createStoryFile();
 
-    if (!result) {
-      alert("No pudimos generar la imagen.");
+      setGeneratedBlob(result.blob);
+      setGeneratedUrl(result.url);
+    } catch (error) {
+      console.error("Error generando historia:", error);
+      alert("No pudimos generar la historia. Probá de nuevo.");
+    } finally {
       setGenerating(false);
-      return;
     }
-
-    setGeneratedBlob(result.blob);
-    setGeneratedUrl(result.url);
-    setGenerating(false);
   };
 
   const downloadStory = async () => {
-    let blob = generatedBlob;
+    try {
+      let blob = generatedBlob;
 
-    if (!blob) {
-      const result = await createStoryFile();
-      if (!result) return;
-      blob = result.blob;
-      setGeneratedBlob(result.blob);
-      setGeneratedUrl(result.url);
+      if (!blob) {
+        const result = await createStoryFile();
+        blob = result.blob;
+        setGeneratedBlob(result.blob);
+        setGeneratedUrl(result.url);
+      }
+
+      const link = document.createElement("a");
+      link.download = `magnolia-turnos-${Date.now()}.png`;
+      link.href = URL.createObjectURL(blob);
+      link.click();
+      URL.revokeObjectURL(link.href);
+    } catch (error) {
+      console.error("Error descargando historia:", error);
+      alert("No pudimos guardar la imagen.");
     }
-
-    const link = document.createElement("a");
-    link.download = `magnolia-turnos-${Date.now()}.png`;
-    link.href = URL.createObjectURL(blob);
-    link.click();
-    URL.revokeObjectURL(link.href);
   };
 
   const shareStory = async () => {
-    let blob = generatedBlob;
+    try {
+      let blob = generatedBlob;
 
-    if (!blob) {
-      const result = await createStoryFile();
-      if (!result) return;
-      blob = result.blob;
-      setGeneratedBlob(result.blob);
-      setGeneratedUrl(result.url);
-    }
+      if (!blob) {
+        const result = await createStoryFile();
+        blob = result.blob;
+        setGeneratedBlob(result.blob);
+        setGeneratedUrl(result.url);
+      }
 
-    const file = new File([blob], `magnolia-turnos-${Date.now()}.png`, {
-      type: "image/png",
-    });
+      const file = new File([blob], `magnolia-turnos-${Date.now()}.png`, {
+        type: "image/png",
+      });
 
-    const nav = navigator as Navigator & {
-      canShare?: (data: ShareData) => boolean;
-    };
+      const nav = navigator as Navigator & {
+        canShare?: (data: ShareData) => boolean;
+      };
 
-    if (navigator.share && (!nav.canShare || nav.canShare({ files: [file] }))) {
-      try {
+      if (
+        navigator.share &&
+        (!nav.canShare || nav.canShare({ files: [file] }))
+      ) {
         await navigator.share({
           title: "Turnos disponibles Magnolia Beauty",
           text: "Turnos disponibles Magnolia Beauty 🌸",
           files: [file],
         });
-      } catch (error) {
-        console.error("Share cancelled/error:", error);
+      } else {
+        await downloadStory();
       }
-    } else {
-      await downloadStory();
+    } catch (error) {
+      console.error("Error compartiendo historia:", error);
     }
   };
 
@@ -483,7 +494,7 @@ export default function AdminHistoriasPage() {
 
       <div
         aria-hidden="true"
-        className="fixed left-[-2000px] top-0 z-[-1] overflow-hidden"
+        className="absolute left-[-9999px] top-0 overflow-hidden"
       >
         <div
           ref={storyRef}
