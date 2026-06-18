@@ -11,13 +11,7 @@ function getErrorDetails(error: unknown) {
 }
 
 function getBaseUrl() {
-  return (
-    process.env.NEXT_PUBLIC_SITE_URL ||
-    process.env.NEXT_PUBLIC_APP_URL ||
-    process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : "https://magnolia-beauty-iota.vercel.app"
-  );
+  return "https://magnolia-beauty-iota.vercel.app";
 }
 
 export async function POST(request: Request) {
